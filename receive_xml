@@ -1,5 +1,3 @@
-package com.citi.sea.batcheng.changeman.documents;
-
 import lombok.*;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.Indexed;
@@ -19,60 +17,59 @@ public class ChangemanRawXml {
     private String id;
 
     /**
-     * Full raw XML payload received from Changeman.
+     * Full raw XML payload received from Changeman
      */
     private String payload;
 
     /**
-     * Timestamp when Snowman received the message (UTC).
+     * UTC timestamp when message was received
      */
-    @Indexed // useful for time-based queries & cleanup later
+    @Indexed
     private Instant receivedAt;
 
     /**
-     * Processing lifecycle status.
-     * For now always set to RECEIVED.
+     * Processing lifecycle status
      */
     private ProcessingStatus status;
 
     /**
-     * Source of ingestion (REST / FILEWATCHER / etc).
+     * Source of ingestion (REST / FILEWATCHER)
      */
     private String source;
 }
-
---------------------
+--
 package com.citi.sea.batcheng.changeman.enums;
 
 public enum ProcessingStatus {
-
     RECEIVED,
     PARSED,
     PROCESSED,
     FAILED
-
 }
-
------------------
+--
 package com.citi.sea.batcheng.changeman.repositories;
 
 import com.citi.sea.batcheng.changeman.documents.ChangemanRawXml;
 import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.stereotype.Repository;
 
+@Repository
 public interface ChangemanRawXmlRepository
         extends MongoRepository<ChangemanRawXml, String> {
 }
----------------------
+--
 package com.citi.sea.batcheng.changeman.services;
 
 import com.citi.sea.batcheng.changeman.documents.ChangemanRawXml;
 import com.citi.sea.batcheng.changeman.enums.ProcessingStatus;
 import com.citi.sea.batcheng.changeman.repositories.ChangemanRawXmlRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 
+@Log4j2(topic = "-- ChangemanFilewatcherService --")
 @Service
 @RequiredArgsConstructor
 public class ChangemanFilewatcherService {
@@ -81,37 +78,51 @@ public class ChangemanFilewatcherService {
 
     public void saveRawXml(String xml, String source) {
 
-        ChangemanRawXml doc = ChangemanRawXml.builder()
+        if (xml == null || xml.isBlank()) {
+            log.warn("Received empty Changeman XML payload");
+            return;
+        }
+
+        ChangemanRawXml document = ChangemanRawXml.builder()
                 .payload(xml)
                 .receivedAt(Instant.now())
                 .status(ProcessingStatus.RECEIVED)
                 .source(source)
                 .build();
 
-        repository.save(doc);
+        repository.save(document);
+
+        log.info("Changeman raw XML stored successfully");
     }
 }
-
--------------------------
-package com.citi.sea.batcheng.changeman.controllers;
-
+--
 import com.citi.sea.batcheng.changeman.services.ChangemanFilewatcherService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.log4j.Log4j2;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+@Log4j2(topic = "-- ChangemanFilewatcherController --")
+@RequiredArgsConstructor
+@CrossOrigin
 @RestController
 @RequestMapping("/api/changeman/filewatcher")
-@RequiredArgsConstructor
 public class ChangemanFilewatcherController {
 
     private final ChangemanFilewatcherService service;
 
-    @PostMapping(consumes = {"application/xml", "text/plain"})
-    public ResponseEntity<String> receiveXml(@RequestBody String xml) {
+    @PostMapping(consumes = {
+            MediaType.APPLICATION_XML_VALUE,
+            MediaType.TEXT_PLAIN_VALUE
+    })
+    public ResponseEntity<String> receiveChangemanXml(@RequestBody String content) {
 
-        service.saveRawXml(xml, "REST");
+        log.info("Received Changeman XML payload");
 
-        return ResponseEntity.accepted().body("XML received");
+        service.saveRawXml(content, "REST");
+
+        // ACCEPTED is semantically better for async pipelines
+        return ResponseEntity.accepted().body("OK");
     }
 }
