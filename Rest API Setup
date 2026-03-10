@@ -1,0 +1,186 @@
+package com.snowman.changeman.entity;
+
+import lombok.*;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@Document(collection = "lparEntity")
+public class LparEntity {
+
+    @Id
+    private String name;
+
+    private String url;
+    private String fidName;
+    private String fidPassword;
+}
+---
+{
+  "_id": "RD01",
+  "url": "http://sysi.gcb-us-hosts.citicorp.com:8080",
+  "fidName": "CMNRSTU",
+  "fidPassword": "password"
+}
+---
+package com.snowman.changeman.repository;
+
+import com.snowman.changeman.entity.LparEntity;
+import org.springframework.data.mongodb.repository.MongoRepository;
+
+import java.util.Optional;
+
+public interface LparRepository extends MongoRepository<LparEntity, String> {
+
+    Optional<LparEntity> findByName(String name);
+
+}
+---
+package com.snowman.changeman.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestTemplate;
+
+@Configuration
+public class RestTemplateConfig {
+
+    @Bean
+    public RestTemplate restTemplate() {
+        return new RestTemplate();
+    }
+
+}
+---
+package com.snowman.changeman.dto;
+
+import lombok.Data;
+
+@Data
+public class CreatePackageRequest {
+
+    private String applName;
+    private Integer createMethod;
+
+}
+---
+package com.snowman.changeman.client;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.*;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.Base64;
+
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class ChangeManApiClient {
+
+    private final RestTemplate restTemplate;
+
+    public String callApi(String url,
+                          String fid,
+                          String password,
+                          HttpMethod method,
+                          Object body) {
+
+        String auth = fid + ":" + password;
+        String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Authorization", "Basic " + encodedAuth);
+
+        HttpEntity<Object> entity = new HttpEntity<>(body, headers);
+
+        log.info("Calling ChangeMan API {}", url);
+
+        ResponseEntity<String> response =
+                restTemplate.exchange(url, method, entity, String.class);
+
+        log.info("ChangeMan response status {}", response.getStatusCode());
+
+        return response.getBody();
+    }
+}
+---
+package com.snowman.changeman.service;
+
+import com.snowman.changeman.client.ChangeManApiClient;
+import com.snowman.changeman.dto.CreatePackageRequest;
+import com.snowman.changeman.entity.LparEntity;
+import com.snowman.changeman.repository.LparRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpMethod;
+import org.springframework.stereotype.Service;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class ChangeManService {
+
+    private final LparRepository lparRepository;
+    private final ChangeManApiClient apiClient;
+
+    public String createPackage(String lparName, CreatePackageRequest request) {
+
+        LparEntity lpar = lparRepository.findByName(lparName)
+                .orElseThrow(() -> new RuntimeException("LPAR not found"));
+
+        String url = lpar.getUrl() + "/zmfrest/package";
+
+        return apiClient.callApi(
+                url,
+                lpar.getFidName(),
+                lpar.getFidPassword(),
+                HttpMethod.POST,
+                request
+        );
+    }
+}
+---
+package com.snowman.changeman.controller;
+
+import com.snowman.changeman.dto.CreatePackageRequest;
+import com.snowman.changeman.service.ChangeManService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/changeman")
+@RequiredArgsConstructor
+public class ChangeManController {
+
+    private final ChangeManService changeManService;
+
+    @PostMapping("/package/{lpar}")
+    public String createPackage(@PathVariable String lpar,
+                                @RequestBody CreatePackageRequest request) {
+
+        return changeManService.createPackage(lpar, request);
+    }
+}
+---
+POST http://localhost:8080/changeman/package/RD01
+{
+  "applName": "TEST",
+  "createMethod": 1
+}
+
+---------------------
+One Important Improvement I Recommend
+
+Instead of returning String, create a response DTO once you see the actual response.
+
+Example:
+
+CreatePackageResponse
+
+But for now String is fine.
